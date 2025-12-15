@@ -38,23 +38,60 @@ class MonteCarloSampler:
 
         Returns:
             Dict[position][cell_value] = probability
+            
+        Raises:
+            ValueError: If board constraints are impossible or contradictory
         """
         start_time = time.time()
         time_budget = time_budget_ms / 1000.0
 
-        domains = self.solver.solve()
+        # First, validate that the board is solvable
+        try:
+            domains = self.solver.solve()
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid board configuration detected during constraint propagation: {str(e)}. "
+                "Please verify that:\n"
+                "  - Row and column sums are achievable with the given voltorb counts\n"
+                "  - Revealed tiles don't contradict the constraints\n"
+                "  - Each row/column has valid combinations"
+            )
 
         counts: Dict[Position, Dict[CellValue, int]] = {
             pos: defaultdict(int) for pos in domains
         }
 
         valid_samples = 0
+        total_attempts = 0
+        max_attempts = 10000  # Safety limit to prevent infinite loops
 
         while True:
+            # Check time budget
             if time.time() - start_time >= time_budget:
                 break
+            
+            # Check attempt limit
+            total_attempts += 1
+            if total_attempts >= max_attempts:
+                if valid_samples == 0:
+                    raise ValueError(
+                        f"Could not find any valid board configurations after {max_attempts} attempts. "
+                        "The given constraints appear to be impossible to satisfy together. "
+                        "\n\nCommon issues:"
+                        "\n  - Row sum + column sum mismatch"
+                        "\n  - Voltorb counts impossible with given sums"
+                        "\n  - Revealed tiles conflict with constraints"
+                        "\n\nSuggestion: Double-check constraint values and revealed tiles."
+                    )
+                # If we have at least some samples, use them
+                break
 
-            assignment = self._random_assignment(domains)
+            try:
+                assignment = self._random_assignment(domains)
+            except (ValueError, KeyError) as e:
+                # This can happen if row configurations are temporarily exhausted
+                # Just skip and try again
+                continue
 
             if self._is_valid_assignment(assignment):
                 valid_samples += 1
@@ -64,7 +101,12 @@ class MonteCarloSampler:
         if valid_samples == 0:
             raise ValueError(
                 "The given row/column constraints are inconsistent. "
-                "No valid Voltorb Flip board exists for this configuration."
+                "No valid Voltorb Flip board exists for this configuration.\n"
+                f"Total attempts: {total_attempts}, Valid samples: 0\n"
+                "\nPlease verify:"
+                "\n  - Sum of all row sums = sum of all column sums"
+                "\n  - Voltorb counts are consistent across rows/columns"
+                "\n  - No mathematical impossibilities (e.g., sum=15 with 5 voltorbs)"
             )
 
         return self._normalize(counts, valid_samples)
@@ -99,7 +141,9 @@ class MonteCarloSampler:
 
             if not valid_rows:
                 raise ValueError(
-                    f"No valid row configurations for row {r}"
+                    f"No valid row configurations for row {r}. "
+                    f"This usually means the constraint (sum={constraint.total_sum}, "
+                    f"voltorbs={constraint.voltorb_count}) is impossible to satisfy."
                 )
 
             chosen_row = random.choice(valid_rows)
