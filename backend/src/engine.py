@@ -33,22 +33,19 @@ class SolverEngine:
             "forced_values": [],
             "quit_recommended": False,
             "explanation": "",
-            "game_state": "active" # New field for Win Detection
+            "game_state": "active"
         }
 
         # ------------------------------
         # Step 1: CSP analysis
         # ------------------------------
         try:
-            # Solve to get the possible values (domains) for every tile
             domains = self.csp_solver.solve()
             
-            # --- WIN CONDITION CHECK ---
-            # The game is won if NO hidden tile can possibly be a 2 or 3.
+            # --- WIN CONDITION ---
             can_win_points = False
             for pos, domain in domains.items():
                 if not self.board.grid[pos].revealed:
-                    # If any hidden tile allows a 2 or 3, the game continues
                     if 2 in domain or 3 in domain:
                         can_win_points = True
                         break
@@ -56,7 +53,6 @@ class SolverEngine:
             if not can_win_points:
                 result["game_state"] = "won"
                 result["explanation"] = "🎉 GAME CLEARED! All 2s and 3s have been found."
-                # We can stop here, no need to recommend moves if we won.
                 return result
 
             # --- STANDARD LOGIC ---
@@ -65,20 +61,16 @@ class SolverEngine:
             forced_map = self.csp_solver.forced_assignments()
             
             # --- SMART AUTO-FLIP ---
-            # We filter the forced values based on the mode.
             final_forced_values = []
             for (r, c), val in forced_map.items():
-                # Skip if already revealed
                 if self.board.grid[(r, c)].revealed:
                     continue
                 
-                # In PROFIT mode, we do NOT auto-flip 1s. 
-                # We want them to remain hidden (but safe) so the user focuses on 2s/3s.
+                # In PROFIT mode, we hide 1s (val=1). 
+                # But we MUST show Voltorbs (val=0) and high cards (val=2,3).
                 if self.mode == "profit" and val == 1:
                     continue
                 
-                # In Level mode, we flip everything safe (1s included).
-                    
                 final_forced_values.append({"row": r, "col": c, "value": val})
 
             result["guaranteed_safe"] = guaranteed_safe
@@ -91,12 +83,11 @@ class SolverEngine:
             return result
 
         # ------------------------------
-        # Step 2: Monte Carlo Sampling
+        # Step 2: Monte Carlo
         # ------------------------------
         sampler = MonteCarloSampler(self.board)
         unrevealed_count = len(self.board.unrevealed_positions())
         
-        # Dynamic time budget based on remaining tiles
         if unrevealed_count > 20: time_budget = 40
         elif unrevealed_count > 10: time_budget = 75
         else: time_budget = 120
@@ -108,7 +99,7 @@ class SolverEngine:
             metrics = {}
 
         # ------------------------------
-        # Step 3: Policy Application
+        # Step 3: Policy
         # ------------------------------
         if self.mode == "level":
             return self._level_mode(metrics, result)
@@ -123,11 +114,10 @@ class SolverEngine:
         if recommendations:
             surv_prob = policy.survival_probability(recommendations)
 
-        # Uses the helper _fmt_rec to keep code DRY (Don't Repeat Yourself)
         base_result.update({
             "recommendations": [self._fmt_rec(p, d) for p, d in recommendations],
             "quit_recommended": self.quit_policy.should_quit_level_mode(surv_prob),
-            "explanation": "Level Mode: Showing all safe moves."
+            "explanation": "Level Mode: Showing safest moves."
         })
         return base_result
 
@@ -135,8 +125,17 @@ class SolverEngine:
         policy = ProfitMaximizationPolicy()
         recommendations = policy.recommend(metrics)
 
+        # Fallback: If profit policy returns nothing (e.g. too risky),
+        # but we are NOT quitting yet, grab the least risky move from Level policy
+        # so the user has *something* to click.
+        if not recommendations and not base_result["forced_values"]:
+            fallback_policy = LevelMaximizationPolicy(required_safe_moves=1)
+            recommendations = fallback_policy.recommend(metrics)
+            base_result["explanation"] = "Profit Mode: High risk! Showing safest fallback."
+        else:
+            base_result["explanation"] = "Profit Mode: Targeting 2s and 3s."
+
         quit_now = False
-        # Only recommend quitting if no recommendations AND no forced values exist
         if not recommendations and not base_result["forced_values"]:
             quit_now = True
         elif recommendations:
@@ -145,13 +144,11 @@ class SolverEngine:
 
         base_result.update({
             "recommendations": [self._fmt_rec(p, d) for p, d in recommendations],
-            "quit_recommended": quit_now,
-            "explanation": "Profit Mode: Focusing on 2s and 3s."
+            "quit_recommended": quit_now
         })
         return base_result
 
     def _fmt_rec(self, pos, data):
-        """Helper to format recommendation for API"""
         return {
             "position": pos,
             "p_voltorb": data["p_voltorb"],
