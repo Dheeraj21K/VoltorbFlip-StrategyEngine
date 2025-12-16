@@ -1,4 +1,4 @@
-from typing import List, Literal
+from typing import List, Literal, Dict
 from pydantic import BaseModel
 
 
@@ -26,11 +26,22 @@ class Recommendation(BaseModel):
     expected_value: float | None = None
     risk_tier: str | None = None
     reason: str | None = None
+    distribution: Dict[int, float] = {}
+
+
+class ForcedTile(BaseModel):
+    row: int
+    col: int
+    value: int
 
 
 class SolveResponse(BaseModel):
     guaranteed_safe: List[List[int]]
     guaranteed_voltorb: List[List[int]]
     recommendations: List[Recommendation]
+    forced_values: List[ForcedTile] = []
     quit_recommended: bool
     explanation: str
+    mode: str
+    # NEW: Status of the game logic
+    game_state: Literal["active", "won", "lost"] = "active"

@@ -1,29 +1,33 @@
 :root {
-  /* Backgrounds */
-  --bg-app: #0f172a;       /* Slate 900 */
-  --bg-panel: #1e293b;     /* Slate 800 */
-  --bg-tile: #334155;      /* Slate 700 */
-  --bg-tile-hover: #475569;
-
-  /* Game States */
-  --color-safe: #10b981;   /* Emerald 500 */
-  --color-danger: #ef4444; /* Red 500 */
-  --color-gold: #f59e0b;   /* Amber 500 */
-  --color-text: #f8fafc;   /* Slate 50 */
-  --color-muted: #94a3b8;  /* Slate 400 */
-
-  /* UI Accents */
-  --accent-primary: #3b82f6; /* Blue 500 */
-  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -2px rgb(0 0 0 / 0.1);
+  /* DS Game Palette */
+  --bg-app: #70c48d;       /* Main Green Background */
+  --bg-panel: #2e8b57;     /* Darker Green Panel */
+  --bg-tile-hidden: #3e8e41; /* Standard Green Tile */
+  --bg-tile-flipped: #cbaacb; /* Brownish/Pinkish flipped color */
   
-  /* Animation */
-  --ease-spring: cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  /* Constraint Colors (Top to Bottom / Left to Right) */
+  --c-orange: #ff7f50;
+  --c-green: #4caf50;
+  --c-yellow: #fdd835;
+  --c-blue: #42a5f5;
+  --c-purple: #ab47bc;
+
+  /* Text & UI */
+  --color-text: #ffffff;
+  --color-dark-text: #333333;
+  --shadow-depth: 0 4px 0 rgba(0,0,0,0.2);
+  --shadow-inset: inset 0 0 10px rgba(0,0,0,0.1);
+  
+  /* Accents */
+  --accent-primary: #3b82f6; 
+  --color-danger: #ef4444;
+  --color-gold: #f59e0b;
+  --bg-tile-hover: #475569;
 }
 
 body {
   margin: 0;
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: 'Verdana', sans-serif; /* More retro/gamey font */
   background-color: var(--bg-app);
   color: var(--color-text);
   -webkit-font-smoothing: antialiased;
@@ -36,4 +40,4 @@ body {
 /* Scrollbar polish */
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-track { background: var(--bg-app); }
-::-webkit-scrollbar-thumb { background: var(--bg-tile); border-radius: 4px; }
+::-webkit-scrollbar-thumb { background: var(--bg-panel); border-radius: 4px; }

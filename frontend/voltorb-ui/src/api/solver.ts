@@ -31,13 +31,10 @@ export async function analyzeBoard(
           errorMessage = text;
         }
         
-        // Make errors more user-friendly and preserve formatting
         if (errorMessage.includes("⚠️")) {
-          // Already formatted by backend
           throw new Error(errorMessage);
         }
         
-        // Add context to common errors
         if (errorMessage.toLowerCase().includes("constraint")) {
           errorMessage = "❌ Invalid Board\n\n" + errorMessage;
         } else if (errorMessage.toLowerCase().includes("impossible")) {
@@ -61,19 +58,22 @@ export async function analyzeBoard(
       pVoltorb: r.p_voltorb ?? r.pVoltorb ?? 0,
       expectedValue: r.expected_value ?? r.expectedValue ?? 0,
       riskTier: r.risk_tier ?? r.riskTier ?? "UNKNOWN",
+      distribution: r.distribution || {}
     }));
 
     return {
       guaranteed_safe: data.guaranteed_safe || [],
       guaranteed_voltorb: data.guaranteed_voltorb || [],
       recommendations: normalizedRecommendations,
+      forced_values: data.forced_values || [],
       quit_recommended: data.quit_recommended || false,
       explanation: data.explanation || "Calculation complete.",
       mode: data.mode || "level",
+      // Pass the game state through
+      game_state: data.game_state || "active", 
     };
     
   } catch (error) {
-    // Network errors or other fetch failures
     if (error instanceof Error) {
       throw error;
     }

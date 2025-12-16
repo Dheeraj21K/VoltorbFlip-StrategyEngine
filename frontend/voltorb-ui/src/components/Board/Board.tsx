@@ -1,329 +1,305 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import Tile from "./Tile";
-import "../../styles/theme.css";
-import "./Board.css";
-
 import { analyzeBoard } from "../../api/solver";
-import { useKeyboard } from "../../hooks/useKeyboard";
-
-import type {
-  TileState,
-  AnalyzeRequest,
-  LineConstraint,
-} from "../../types";
+import type { TileState, LineConstraint } from "../../types";
+import "./Board.css";
 
 const SIZE = 5;
 
-/* ---------------- Helpers ---------------- */
-
+// Helper to create empty board
 function createEmptyBoard(): TileState[][] {
   return Array.from({ length: SIZE }, () =>
     Array.from({ length: SIZE }, () => ({
       value: null,
       revealed: false,
+      distribution: undefined,
     }))
   );
 }
 
-function buildAnalyzeRequest(
-  grid: TileState[][],
-  rows: LineConstraint[],
-  cols: LineConstraint[],
-  mode: "level" | "profit"
-): AnalyzeRequest {
-  const revealed: AnalyzeRequest["revealed"] = [];
-
-  for (let r = 0; r < SIZE; r++) {
-    for (let c = 0; c < SIZE; c++) {
-      const tile = grid[r][c];
-      if (tile.revealed && tile.value !== null) {
-        revealed.push({
-          position: [r, c],
-          value: tile.value,
-        });
-      }
-    }
-  }
-
-  return { mode, rows, cols, revealed };
-}
-
-function validateConstraint(sum: number, voltorbs: number): string | null {
-  if (voltorbs < 0 || voltorbs > 5) return "0-5 voltorbs";
-  if (sum < 0) return "Sum ≥ 0";
-  
-  const minSum = 5 - voltorbs;
-  const maxSum = (5 - voltorbs) * 3;
-  
-  if (sum < minSum) return `Min: ${minSum}`;
-  if (sum > maxSum) return `Max: ${maxSum}`;
-  
-  return null;
-}
-
-/* ---------------- Component ---------------- */
+// History Snapshot Type for Undo
+type HistoryState = {
+  grid: TileState[][];
+  rowConstraints: LineConstraint[];
+  colConstraints: LineConstraint[];
+};
 
 export default function Board() {
   const [grid, setGrid] = useState<TileState[][]>(createEmptyBoard);
-  const [cursor, setCursor] = useState({ row: 0, col: 0 });
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Two solver policies
-  const [mode, setMode] = useState<"level" | "profit">("level");
-
-  const [quitRecommended, setQuitRecommended] = useState(false);
-  const [solverExplanation, setSolverExplanation] = useState<string | null>(null);
-
-  // Constraints
   const [rowConstraints, setRowConstraints] = useState<LineConstraint[]>(
     Array.from({ length: SIZE }, () => ({ sum: 0, voltorbs: 0 }))
   );
   const [colConstraints, setColConstraints] = useState<LineConstraint[]>(
     Array.from({ length: SIZE }, () => ({ sum: 0, voltorbs: 0 }))
   );
-
-  /* ---------------- Constraint Handlers ---------------- */
-
-  function updateConstraint(
-    index: number,
-    field: "sum" | "voltorbs",
-    value: string,
-    isRow: boolean
-  ) {
-    let num = Number(value);
-    if (!Number.isFinite(num)) num = 0;
-
-    if (field === "sum") num = Math.max(0, Math.min(15, num));
-    if (field === "voltorbs") num = Math.max(0, Math.min(5, num));
-
-    const setter = isRow ? setRowConstraints : setColConstraints;
-
-    setter((prev) => {
-      const next = [...prev];
-      next[index] = { ...next[index], [field]: num };
-      return next;
-    });
-    
-    // Clear error when user makes changes
-    setError(null);
-  }
-
-  /* ---------------- Tile Interaction (Click Cycle) ---------------- */
-
-  function handleTileClick(r: number, c: number) {
-    setCursor({ row: r, col: c });
-
-    setGrid((prev) => {
-      const next = prev.map((row) => row.map((t) => ({ ...t })));
-      const current = next[r][c].value;
-
-      let value: 0 | 1 | 2 | 3 | null = null;
-
-      if (current === null) value = 1;
-      else if (current === 1) value = 2;
-      else if (current === 2) value = 3;
-      else if (current === 3) value = 0;
-      else value = null;
-
-      next[r][c].value = value;
-      next[r][c].revealed = value !== null;
-
-      return next;
-    });
-    
-    // Clear solver results when board changes
-    setQuitRecommended(false);
-    setSolverExplanation(null);
-    setError(null);
-  }
-
-  /* ---------------- Keyboard Interaction ---------------- */
-
-  useKeyboard((key) => {
-    // Navigation
-    if (key.startsWith("Arrow")) {
-      setCursor((prev) => {
-        let { row, col } = prev;
-        if (key === "ArrowUp") row = Math.max(0, row - 1);
-        if (key === "ArrowDown") row = Math.min(SIZE - 1, row + 1);
-        if (key === "ArrowLeft") col = Math.max(0, col - 1);
-        if (key === "ArrowRight") col = Math.min(SIZE - 1, col + 1);
-        return { row, col };
-      });
-      return;
-    }
-
-    // Value entry
-    if (["0", "1", "2", "3", "Backspace", "Delete"].includes(key)) {
-      setGrid((prev) => {
-        const next = prev.map((row) => row.map((t) => ({ ...t })));
-
-        let value: 0 | 1 | 2 | 3 | null = null;
-        if (key === "0") value = 0;
-        else if (key === "1") value = 1;
-        else if (key === "2") value = 2;
-        else if (key === "3") value = 3;
-
-        next[cursor.row][cursor.col].value = value;
-        next[cursor.row][cursor.col].revealed = value !== null;
-
-        return next;
-      });
-      
-      // Clear solver results when board changes
-      setQuitRecommended(false);
-      setSolverExplanation(null);
-      setError(null);
-    }
-  });
-
-  /* ---------------- Validation ---------------- */
   
-  function validateBoard(): string | null {
-    // Check individual constraints
-    for (let i = 0; i < SIZE; i++) {
-      const rowError = validateConstraint(rowConstraints[i].sum, rowConstraints[i].voltorbs);
-      if (rowError) return `Row ${i}: ${rowError}`;
-      
-      const colError = validateConstraint(colConstraints[i].sum, colConstraints[i].voltorbs);
-      if (colError) return `Column ${i}: ${colError}`;
-    }
-    
-    // Check global consistency
-    const totalRowSum = rowConstraints.reduce((sum, r) => sum + r.sum, 0);
-    const totalColSum = colConstraints.reduce((sum, c) => sum + c.sum, 0);
-    
-    if (totalRowSum !== totalColSum) {
-      return `Row sums (${totalRowSum}) must equal column sums (${totalColSum})`;
-    }
-    
-    const totalRowVoltorbs = rowConstraints.reduce((sum, r) => sum + r.voltorbs, 0);
-    const totalColVoltorbs = colConstraints.reduce((sum, c) => sum + c.voltorbs, 0);
-    
-    if (totalRowVoltorbs !== totalColVoltorbs) {
-      return `Row voltorbs (${totalRowVoltorbs}) must equal column voltorbs (${totalColVoltorbs})`;
-    }
-    
-    return null;
-  }
+  // History Stack
+  const [history, setHistory] = useState<HistoryState[]>([]);
 
-  /* ---------------- Solver ---------------- */
+  // Interaction State
+  const [inputTile, setInputTile] = useState<[number, number] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<"level" | "profit">("level");
+  const [gameState, setGameState] = useState<"active" | "won" | "lost">("active");
+  const [explanation, setExplanation] = useState<string | null>(null);
 
-  async function runSolver() {
+  // Refs for Keyboard Navigation [R0S, R0V, R1S, R1V... C0S, C0V...]
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  // --- History Management ---
+  const saveToHistory = () => {
+    setHistory(prev => [
+      ...prev.slice(-10), // Keep last 10 moves
+      {
+        grid: JSON.parse(JSON.stringify(grid)),
+        rowConstraints: JSON.parse(JSON.stringify(rowConstraints)),
+        colConstraints: JSON.parse(JSON.stringify(colConstraints))
+      }
+    ]);
+  };
+
+  const undo = () => {
+    if (history.length === 0) return;
+    const prev = history[history.length - 1];
+    setGrid(prev.grid);
+    setRowConstraints(prev.rowConstraints);
+    setColConstraints(prev.colConstraints);
+    setHistory(h => h.slice(0, -1));
+    setExplanation(null);
+    setGameState("active");
+  };
+
+  // --- Handlers ---
+
+  const handleTileClick = (r: number, c: number) => {
+    // If tile is already revealed (either manually or by auto-solve), ignore click
+    if (grid[r][c].revealed) return;
+    setInputTile(inputTile && inputTile[0] === r && inputTile[1] === c ? null : [r, c]);
+  };
+
+  const handleTileInput = (r: number, c: number, val: 0 | 1 | 2 | 3) => {
+    saveToHistory(); // Save before mutating
+    
+    const newGrid = [...grid];
+    newGrid[r] = [...newGrid[r]];
+    newGrid[r][c] = {
+      ...newGrid[r][c],
+      value: val,
+      revealed: true,
+      distribution: undefined // Clear prediction once known
+    };
+    setGrid(newGrid);
+    setInputTile(null);
+    setError(null);
+  };
+
+  const updateConstraint = (
+    idx: number, 
+    type: 'sum' | 'voltorbs', 
+    val: string, 
+    isRow: boolean
+  ) => {
+    const num = parseInt(val);
+    // Allow empty string for clearing input, else default to 0 for logic
+    const cleanNum = isNaN(num) ? 0 : num;
+    
+    const setter = isRow ? setRowConstraints : setColConstraints;
+    setter(prev => {
+      const next = [...prev];
+      next[idx] = { ...next[idx], [type]: cleanNum };
+      return next;
+    });
+    setError(null);
+  };
+
+  // --- Solver Integration ---
+  
+  const runSolver = async () => {
+    if(loading) return;
+    saveToHistory(); // Save state before solver might auto-reveal stuff
+    
+    setLoading(true);
+    setError(null);
+    setExplanation(null);
+    
     try {
-      setLoading(true);
-      setError(null);
-      setQuitRecommended(false);
-      setSolverExplanation(null);
-      
-      // Frontend validation
-      const validationError = validateBoard();
-      if (validationError) {
-        setError(validationError);
-        return;
+      // Build request payload
+      const revealedTiles = [];
+      for(let r=0; r<SIZE; r++) {
+        for(let c=0; c<SIZE; c++) {
+          if(grid[r][c].revealed && grid[r][c].value !== null) {
+            revealedTiles.push({ position: [r,c] as [number, number], value: grid[r][c].value! });
+          }
+        }
       }
 
-      const payload = buildAnalyzeRequest(
-        grid,
-        rowConstraints,
-        colConstraints,
-        mode
-      );
+      const res = await analyzeBoard({
+        mode,
+        rows: rowConstraints,
+        cols: colConstraints,
+        revealed: revealedTiles
+      });
 
-      const result = await analyzeBoard(payload);
-      setQuitRecommended(result.quit_recommended);
-      setSolverExplanation(result.explanation ?? null);
-      const best = result.recommendations[0]?.position;
+      setExplanation(res.explanation);
+      setGameState(res.game_state);
 
-      setGrid((prev) =>
-        prev.map((row, r) =>
-          row.map((tile, c) => {
-            const rec = result.recommendations.find(
-              (x) => x.position[0] === r && x.position[1] === c
-            );
+      // If Game Won, stop processing moves
+      if (res.game_state === 'won') {
+        setLoading(false);
+        return; 
+      }
 
-            return {
-              ...tile,
-              guaranteedSafe: result.guaranteed_safe.some(
-                ([rr, cc]) => rr === r && cc === c
-              ),
-              guaranteedVoltorb: result.guaranteed_voltorb.some(
-                ([rr, cc]) => rr === r && cc === c
-              ),
-              pVoltorb: rec?.pVoltorb,
-              bestMove: best
-                ? best[0] === r && best[1] === c
-                : false,
-            };
-          })
-        )
-      );
+      // Create a map of auto-solved tiles for easy lookup
+      const forcedMap = new Map<string, number>();
+      if (res.forced_values) {
+        res.forced_values.forEach(fv => {
+          forcedMap.set(`${fv.row},${fv.col}`, fv.value);
+        });
+      }
+
+      setGrid(prev => prev.map((row, r) => row.map((tile, c) => {
+        // 1. Check if this tile was just Auto-Solved (Forced)
+        const forcedVal = forcedMap.get(`${r},${c}`);
+        if (forcedVal !== undefined && !tile.revealed) {
+          return {
+            ...tile,
+            value: forcedVal as 0 | 1 | 2 | 3,
+            revealed: true,
+            guaranteedSafe: forcedVal > 0,
+            guaranteedVoltorb: forcedVal === 0,
+            distribution: undefined, // No need for shadows if revealed
+            bestMove: false 
+          };
+        }
+
+        // 2. If already revealed, keep state
+        if(tile.revealed) return tile;
+
+        // 3. Otherwise update solver data (Shadows/Probabilities)
+        const rec = res.recommendations.find(re => re.position[0] === r && re.position[1] === c);
+        
+        return {
+          ...tile,
+          pVoltorb: rec?.pVoltorb,
+          // Use the full distribution from backend for shadows
+          distribution: rec?.distribution || undefined, 
+          bestMove: res.recommendations[0]?.position[0] === r && res.recommendations[0]?.position[1] === c,
+          // Update guarantee flags
+          guaranteedSafe: res.guaranteed_safe.some(([gr, gc]) => gr === r && gc === c),
+          guaranteedVoltorb: res.guaranteed_voltorb.some(([gr, gc]) => gr === r && gc === c),
+        };
+      })));
+
     } catch (e) {
-      console.error("Solver error:", e);
-      setError(e instanceof Error ? e.message : "Unknown error occurred");
+      console.error(e);
+      setError(e instanceof Error ? e.message : "Solver error occurred");
     } finally {
       setLoading(false);
     }
-  }
-  
-  /* ---------------- Reset ---------------- */
-  
-  function resetBoard() {
+  };
+
+  const softReset = () => {
+    saveToHistory();
+    setGrid(createEmptyBoard());
+    setGameState("active");
+    setExplanation(null);
+    setError(null);
+  };
+
+  const hardReset = () => {
+    saveToHistory();
     setGrid(createEmptyBoard());
     setRowConstraints(Array.from({ length: SIZE }, () => ({ sum: 0, voltorbs: 0 })));
     setColConstraints(Array.from({ length: SIZE }, () => ({ sum: 0, voltorbs: 0 })));
-    setQuitRecommended(false);
-    setSolverExplanation(null);
+    setGameState("active");
+    setExplanation(null);
     setError(null);
-  }
+  };
 
-  /* ---------------- Render ---------------- */
+  // --- Keyboard Navigation Logic ---
+  const handleKeyDown = (e: React.KeyboardEvent, index: number) => {
+    // Undo Shortcut
+    if (e.key === "z" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        undo();
+        return;
+    }
+
+    if (e.key.startsWith("Arrow")) {
+      e.preventDefault(); 
+      
+      let nextIndex = index;
+      
+      // Map: 0-9 are Rows (Sum, V, Sum, V...), 10-19 are Cols
+      
+      if (e.key === "ArrowDown") {
+        if (index < 10) nextIndex = Math.min(index + 2, 9); 
+        else nextIndex = index; 
+      } 
+      else if (e.key === "ArrowUp") {
+        if (index < 10) nextIndex = Math.max(index - 2, 0);
+        else nextIndex = index - 10; 
+      }
+      else if (e.key === "ArrowRight") nextIndex = Math.min(index + 1, 19);
+      else if (e.key === "ArrowLeft") nextIndex = Math.max(index - 1, 0);
+
+      inputRefs.current[nextIndex]?.focus();
+    }
+  };
 
   return (
-    <div className="board-wrapper">
+    <div className="board-wrapper" onKeyDown={(e) => {
+        // Global Undo listener if needed, though inputs handle it mostly
+        if (e.key === "z" && (e.ctrlKey || e.metaKey)) undo();
+    }}>
+      
+      {/* Game State Banner (Win) */}
+      {gameState === 'won' && (
+        <div className="quit-banner" style={{background: '#4caf50', color: 'white', border: 'none'}}>
+            <strong>🎉 GAME CLEARED!</strong><br/>
+            All high-value cards have been identified.
+        </div>
+      )}
+
       <div className="board-main-area">
-        {/* Grid */}
+        {/* The 5x5 Grid */}
         <div className="board-grid">
-          {grid.map((row, r) =>
-            row.map((tile, c) => (
-              <Tile
-                key={`${r}-${c}`}
-                tile={tile}
-                isActive={cursor.row === r && cursor.col === c}
-                onClick={() => handleTileClick(r, c)}
-              />
-            ))
-          )}
+          {grid.map((row, r) => row.map((tile, c) => (
+            <Tile 
+              key={`${r}-${c}`}
+              tile={tile}
+              isActive={false} 
+              onClick={() => handleTileClick(r, c)}
+              showInput={inputTile?.[0] === r && inputTile?.[1] === c}
+              onInput={(v) => handleTileInput(r, c, v)}
+            />
+          )))}
         </div>
 
-        {/* Row constraints */}
+        {/* Row Constraints (Right Side) */}
         <div className="constraints-row">
           {rowConstraints.map((rc, i) => (
-            <div key={i} className="constraint-card">
-              <input
-                className="c-input input-sum"
-                type="number"
-                min="0"
-                max="15"
-                value={rc.sum || ""}
-                onChange={(e) =>
-                  updateConstraint(i, "sum", e.target.value, true)
-                }
-                placeholder="Sum"
+            <div key={`row-${i}`} className={`constraint-card c-idx-${i}`}>
+              <input 
+                ref={el => { inputRefs.current[i*2] = el; }}
+                className="c-input sum"
+                type="number" 
+                value={rc.sum || ''} 
+                placeholder="0"
+                onChange={e => updateConstraint(i, 'sum', e.target.value, true)}
+                onKeyDown={e => handleKeyDown(e, i*2)}
               />
-              <div className="input-group">
-                <span>💣</span>
-                <input
-                  className="c-input input-bomb"
-                  type="number"
-                  min="0"
-                  max="5"
-                  value={rc.voltorbs || ""}
-                  onChange={(e) =>
-                    updateConstraint(i, "voltorbs", e.target.value, true)
-                  }
+              <div style={{display:'flex', alignItems:'center'}}>
+                <span style={{fontSize:'12px'}}>💣</span>
+                <input 
+                  ref={el => { inputRefs.current[i*2+1] = el; }}
+                  className="c-input bomb"
+                  type="number" 
+                  value={rc.voltorbs || ''} 
                   placeholder="0"
+                  onChange={e => updateConstraint(i, 'voltorbs', e.target.value, true)}
+                  onKeyDown={e => handleKeyDown(e, i*2+1)}
                 />
               </div>
             </div>
@@ -331,100 +307,95 @@ export default function Board() {
         </div>
       </div>
 
-      {/* Column constraints */}
+      {/* Column Constraints (Bottom) */}
       <div className="constraints-col">
         {colConstraints.map((cc, i) => (
-          <div key={i} className="constraint-card">
-            <input
-              className="c-input input-sum"
-              type="number"
-              min="0"
-              max="15"
-              value={cc.sum || ""}
-              onChange={(e) =>
-                updateConstraint(i, "sum", e.target.value, false)
-              }
-              placeholder="Sum"
-            />
-            <div className="input-group">
-              <span>💣</span>
-              <input
-                className="c-input input-bomb"
-                type="number"
-                min="0"
-                max="5"
-                value={cc.voltorbs || ""}
-                onChange={(e) =>
-                  updateConstraint(i, "voltorbs", e.target.value, false)
-                }
+          <div key={`col-${i}`} className={`constraint-card c-idx-${i}`}>
+             <input 
+                ref={el => { inputRefs.current[10 + i*2] = el; }}
+                className="c-input sum"
+                type="number" 
+                value={cc.sum || ''} 
                 placeholder="0"
+                onChange={e => updateConstraint(i, 'sum', e.target.value, false)}
+                onKeyDown={e => handleKeyDown(e, 10 + i*2)}
               />
-            </div>
+              <div style={{display:'flex', alignItems:'center'}}>
+                <span style={{fontSize:'12px'}}>💣</span>
+                <input 
+                  ref={el => { inputRefs.current[10 + i*2 + 1] = el; }}
+                  className="c-input bomb"
+                  type="number" 
+                  value={cc.voltorbs || ''} 
+                  placeholder="0"
+                  onChange={e => updateConstraint(i, 'voltorbs', e.target.value, false)}
+                  onKeyDown={e => handleKeyDown(e, 10 + i*2 + 1)}
+                />
+              </div>
           </div>
         ))}
       </div>
 
-      {/* Mode Toggle */}
-      <div className="mode-toggle">
-        <button
-          className={mode === "level" ? "active" : ""}
-          onClick={() => setMode("level")}
-          disabled={loading}
-        >
-          🛡 Level
-        </button>
-
-        <button
-          className={mode === "profit" ? "active" : ""}
-          onClick={() => setMode("profit")}
-          disabled={loading}
-        >
-          💰 Profit
-        </button>
+      {/* Mode Controls */}
+      <div style={{display: 'flex', gap: '10px', marginTop: '10px', width: '100%', justifyContent: 'center'}}>
+         <button 
+           onClick={() => setMode('level')} 
+           style={{
+             background: mode === 'level' ? 'var(--color-gold)' : 'var(--bg-tile-hidden)',
+             color: mode === 'level' ? 'black' : 'white',
+             padding: '8px 16px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'
+           }}
+         >
+           Level Mode
+         </button>
+         <button 
+           onClick={() => setMode('profit')} 
+           style={{
+             background: mode === 'profit' ? 'var(--color-gold)' : 'var(--bg-tile-hidden)',
+             color: mode === 'profit' ? 'black' : 'white',
+             padding: '8px 16px', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold'
+           }}
+         >
+           Profit Mode
+         </button>
       </div>
 
-      {/* Mode Explanation */}
-      <div className="mode-explanation">
-        {mode === "level" 
-          ? "🛡 Level Mode: Prioritizes survival to retain your current level. Recommends safest moves and warns when risk is too high."
-          : "💰 Profit Mode: Prioritizes expected value to maximize coins. Accepts higher risk for better rewards."}
-      </div>
+      {/* Explanation Banner */}
+      {explanation && gameState !== 'won' && (
+        <div className="solver-explanation">
+          {explanation}
+        </div>
+      )}
 
-      {/* Error Display */}
       {error && (
         <div className="error-banner">
-          <strong>⚠️ Error</strong>
-          <pre>{error}</pre>
+          <strong>Error</strong><br/>
+          {error}
         </div>
       )}
 
-      {/* Quit Recommendation (inline, non-blocking) */}
-      {quitRecommended && !error && (
-        <div className="quit-banner">
-          <strong>⚠️ Consider quitting</strong>
-          <p>
-            {mode === "level"
-              ? "Continuing now has a low survival probability. Quitting helps preserve your current level."
-              : "Risk outweighs expected value. Quitting may be optimal at this point."}
-          </p>
-        </div>
-      )}
-
-      {/* Optional solver explanation */}
-      {solverExplanation && !error && (
-        <div className="solver-explanation">
-          {solverExplanation}
-        </div>
-      )}
-
-      {/* Action bar */}
+      {/* Action Bar */}
       <div className="action-bar">
         <button className="btn-analyze" onClick={runSolver} disabled={loading}>
-          {loading ? "Calculating…" : "ANALYZE BOARD"}
+          {loading ? "CALCULATING..." : "SOLVE BOARD"}
         </button>
-        <button className="btn-reset" onClick={resetBoard} disabled={loading}>
-          RESET
+        
+        {/* Soft Reset (Keeps Numbers) */}
+        <button className="btn-reset" onClick={softReset} disabled={loading} style={{background: '#ffa726'}}>
+          RESET BOARD
         </button>
+        
+        {/* Hard Reset (Clears Everything) */}
+        <button className="btn-reset" onClick={hardReset} disabled={loading}>
+          CLEAR ALL
+        </button>
+
+        {/* Undo Button */}
+        {history.length > 0 && (
+             <button className="btn-reset" onClick={undo} disabled={loading} style={{background: '#78909c'}}>
+                UNDO
+             </button>
+        )}
       </div>
     </div>
   );

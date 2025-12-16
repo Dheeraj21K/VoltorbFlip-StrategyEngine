@@ -52,7 +52,7 @@ class ProbabilityMetrics:
     def summarize(
         cls,
         distributions: Dict[Position, Dict[CellValue, float]]
-    ) -> Dict[Position, Dict[str, float | str]]:
+    ) -> Dict[Position, Dict[str, float | str | Dict[int, float]]]:
         """
         Produces summary metrics per position.
         """
@@ -66,7 +66,8 @@ class ProbabilityMetrics:
             summary[pos] = {
                 "p_voltorb": p_voltorb,
                 "expected_value": ev,
-                "risk_tier": tier
+                "risk_tier": tier,
+                "distribution": dist  # <--- Added raw distribution here
             }
 
         return summary

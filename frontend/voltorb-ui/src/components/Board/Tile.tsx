@@ -6,34 +6,69 @@ type Props = {
   tile: TileState;
   isActive: boolean;
   onClick: () => void;
+  showInput: boolean;
+  onInput: (val: 0 | 1 | 2 | 3) => void;
 };
 
-export default function Tile({ tile, isActive, onClick }: Props) {
-  // Determine display content
-  let content: React.ReactNode = null;
-  
-  if (tile.value !== null) {
-    // If user has manually set a value
-    content = tile.value === 0 ? <VoltorbIcon /> : tile.value;
+export default function Tile({ tile, isActive, onClick, showInput, onInput }: Props) {
+  // 1. REVEALED STATE: Show the big number or Voltorb
+  if (tile.revealed && tile.value !== null) {
+    return (
+      <div className={`tile revealed value-${tile.value}`}>
+        {tile.value === 0 ? <VoltorbIcon /> : tile.value}
+      </div>
+    );
   }
 
-  // Determine CSS classes
+  // 2. INPUT MODE: Show the 4 mini-buttons to select value
+  if (showInput) {
+    return (
+      <div className="tile input-mode">
+        {[0, 1, 2, 3].map((v) => (
+          <button 
+            key={v} 
+            className={`mini-btn val-${v}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onInput(v as 0 | 1 | 2 | 3);
+            }}
+          >
+            {v === 0 ? "💣" : v}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  // 3. HIDDEN STATE: Show "Shadows" based on Solver Distribution
+  // We check the 'distribution' map. If a number has >0% chance, we show it faintly.
+  const dist = tile.distribution;
+  const showShadow = (val: number) => {
+    if (!dist) return false;
+    // Show shadow if probability is non-zero
+    return (dist[val] || 0) > 0;
+  };
+
   const classes = [
-    "tile",
+    "tile hidden",
     isActive ? "active" : "",
-    tile.guaranteedSafe ? "safe" : "",
-    tile.guaranteedVoltorb ? "voltorb" : "",
     tile.bestMove ? "best-move" : "",
-    // Only show risk shadows if tile is hidden (value is null)
-    (tile.value === null && tile.pVoltorb !== undefined) ? riskClass(tile.pVoltorb) : "",
+    // Only apply risk colors if we actually have data
+    tile.pVoltorb !== undefined ? getRiskClass(tile.pVoltorb) : ""
   ].join(" ");
 
   return (
-    <div className={classes} onClick={onClick} data-value={tile.value}>
-      {content}
+    <div className={classes} onClick={onClick}>
+      {/* Memo Grid: The small numbers 1,2,3,💣 in corners */}
+      <div className="memo-grid">
+        <span className={showShadow(1) ? "memo visible" : "memo"}>1</span>
+        <span className={showShadow(2) ? "memo visible" : "memo"}>2</span>
+        <span className={showShadow(3) ? "memo visible" : "memo"}>3</span>
+        <span className={showShadow(0) ? "memo visible bomb" : "memo"}>💣</span>
+      </div>
       
-      {/* Probability Badge (Only if hidden and calculated) */}
-      {tile.value === null && tile.pVoltorb !== undefined && (
+      {/* Probability Badge: "90%" Safe */}
+      {tile.pVoltorb !== undefined && (
         <div className="prob-badge">
           {Math.round((1 - tile.pVoltorb) * 100)}%
         </div>
@@ -42,10 +77,9 @@ export default function Tile({ tile, isActive, onClick }: Props) {
   );
 }
 
-function riskClass(p?: number) {
-  if (p === undefined) return "";
-  if (p === 0) return "risk-safe";
-  if (p < 0.20) return "risk-low";
-  if (p < 0.50) return "risk-mid";
-  return "risk-high";
+// Helper to color-code the risk levels
+function getRiskClass(p: number) {
+  if (p === 0) return "safe";     // 100% Safe (Gold/Green)
+  if (p > 0.4) return "danger";   // High Risk (Red)
+  return "warning";               // Moderate Risk (Yellow)
 }

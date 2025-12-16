@@ -9,6 +9,8 @@ export interface TileState {
   guaranteedVoltorb?: boolean;
   pVoltorb?: number;
   bestMove?: boolean;
+  // Full probability distribution for shadows {0: 0.1, 1: 0.5...}
+  distribution?: Record<number, number>;
 }
 
 export interface LineConstraint {
@@ -28,13 +30,23 @@ export interface Recommendation {
   pVoltorb: number;
   expectedValue: number;
   riskTier: string;
+  distribution: Record<number, number>;
+}
+
+export interface ForcedTile {
+  row: number;
+  col: number;
+  value: number;
 }
 
 export interface AnalyzeResponse {
   guaranteed_safe: Position[];
   guaranteed_voltorb: Position[];
   recommendations: Recommendation[];
+  forced_values: ForcedTile[];
   quit_recommended: boolean;
   explanation: string;
   mode: "level" | "profit";
+  // NEW: Game State for Win/Loss detection
+  game_state: "active" | "won" | "lost";
 }
